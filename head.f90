@@ -22,6 +22,7 @@ integer(4)::nran=32340460        ! number of lines for random
 
 logical(4)::sncorr=.true.   ! whether correct shot noise
 
+logical(4)::interlace=.false.
 integer(4)::painter=2   ! 2 for cic
 logical(4)::wincorr=.true.   ! whether deconvolve window for field1
 
@@ -57,6 +58,7 @@ integer(4)::rxyz2(3)=[1,2,3]       ! columns for x y z
 integer(4)::nrhead2=0              ! number of lines for header
 integer(4)::nran2=32340460        ! number of lines for random
 
+logical(4)::interlace2=.false.
 integer(4)::painter2=2   ! 2 for cic
 logical(4)::wincorr2=.true.   ! whether deconvolve window for field2, for auto, field2=field1
 

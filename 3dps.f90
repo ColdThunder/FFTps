@@ -7,13 +7,14 @@ implicit none
 
 integer(4)::LL(3)
 real(4),allocatable::pos(:,:)
-real(8),allocatable::gden(:,:,:)
-real(8),allocatable::rden(:,:,:)
+real(8),allocatable::den1(:,:,:)
+real(8),allocatable::den2(:,:,:)
 real(4),allocatable::vc1(:,:,:)
 real(4),allocatable::vc2(:,:,:)
 real(4),allocatable::vc3(:,:,:)
 
 real(4)::boxinfo(2,3)
+real(4)::fsvec(3)
 
 integer(4)::i,j,k,dir
 
@@ -30,84 +31,145 @@ real(4),parameter::pi=4.*atan(1.)
 real(4)::kbasic
 
 
-
-call binscheme
-
 call omp_set_num_threads(NUM_THREADS)
+
+call binscheme 
+
 LL=[L,L,L]
-boxinfo(1:2,1)=[0.,box]
-boxinfo(1:2,2)=[0.,box]
-boxinfo(1:2,3)=[0.,box]
+boxinfo=reshape([0,LL(1),0,LL(2),0,LL(3)],[2,3])
 
 call memo(0)
 
+!! galaxy catalog/field 1
 if (flag_gcata) then
   allocate(pos(3,ngal))
   call readcata(infg,nghead,ngal,pos,gxyz)
-  fs=L/box
-  call ompshift(pos,3,ngal,[0.,0.,0.],boxinfo)
-  call ompscale(pos,3,ngal,[fs,fs,fs])
-  call massassign(ngal,pos,L,gden,painter)  ! get delta_g
+  fsvec=LL/box
+  call ompscale(pos,3,ngal,fsvec)
+
+  fsvec=[0.,0.,0.]
+  call ompshift(pos,3,ngal,fsvec,boxinfo)
+  call massassign(ngal,pos,L,den1,painter)  ! den1 -> delta_g
+
+  if (interlace) then
+    fsvec=[0.5,0.5,0.5]
+    call ompshift(pos,3,ngal,fsvec,boxinfo)
+    call massassign(ngal,pos,L,den2,painter)  ! den2 -> delta_g(interlace)
+  endif
+
   deallocate(pos)
 else
-  call readfield(infg,L,gden)
+  call readfield(infg,L,den1)
 endif
 
+vc1(1:L,:,:)=den1  ! vc1 -> delta_g
+if (interlace) vc3(1:L,:,:)=den2  ! vc3 -> delta_g(interlace)
+
+!! random catalog/field 1
 if (flag_r) then
   if (flag_rcata) then
     allocate(pos(3,nran))
     call readcata(infr,nrhead,nran,pos,rxyz)
-    fs=L/box
-    call ompshift(pos,3,nran,[0.,0.,0.],boxinfo)
-    call ompscale(pos,3,nran,[fs,fs,fs])
-    call massassign(nran,pos,L,rden,painter)  ! get delta_r
+    fsvec=LL/box
+    call ompscale(pos,3,nran,fsvec)
+
+    fsvec=[0.,0.,0.]
+    call ompshift(pos,3,nran,fsvec,boxinfo)
+    call massassign(nran,pos,L,den1,painter)  ! den1 -> delta_r
+
+    if (interlace) then
+      fsvec=[0.5,0.5,0.5]
+      call ompshift(pos,3,nran,fsvec,boxinfo)
+      call massassign(nran,pos,L,den2,painter)  ! den2 -> delta_r (interlace)
+    endif
+
     deallocate(pos)
   else
-    call readfield(infr,L,rden)
+    call readfield(infr,L,den2)
   endif
 
-  gden=gden-rden
+  vc1(1:L,:,:)=vc1(1:L,:,:)-den1  ! vc1 -> delta_g-delta_r
+  if (interlace) vc3(1:L,:,:)=vc3(1:L,:,:)-den2  ! vc3 -> delta_g-delta_r (interlace)
 endif
 
-vc1(1:L,:,:)=gden
-call fftr2c_inplace(vc1,LL)  ! get delta(k)
+call fftr2c_inplace(vc1,LL)  ! vc1 -> delta(k)
+if (interlace) then
+  call fftr2c_inplace(vc3,LL)  ! vc3 -> delta(k) (interlace)
+  fsvec=box/LL/2
+  call phaseshift(vc3,LL,fsvec)  ! correct interlace phase shift
+  vc1=(vc1+vc3)/2   ! vc1 -> delta(k) (interlaced)
+endif
 
+!!! second field
 if (second) then
+  !! galaxy catalogue/field 2
   if (flag_gcata2) then
     allocate(pos(3,ngal2))
     call readcata(infg2,nghead2,ngal2,pos,gxyz2)
-    fs=L/box
-    call ompshift(pos,3,ngal2,[0.,0.,0.],boxinfo)
-    call ompscale(pos,3,ngal2,[fs,fs,fs])
-    call massassign(ngal2,pos,L,gden,painter2)  ! get delta_g
-    deallocate(pos)
-  else
-    call readfield(infg2,L,gden)
-  endif
+    fsvec=LL/box
+    call ompscale(pos,3,ngal2,fsvec)
   
-  if (flag_r) then
-    if (flag_rcata) then
-      allocate(pos(3,nran2))
-      call readcata(infr2,nrhead2,nran2,pos,rxyz2)
-      fs=L/box
-      call ompshift(pos,3,nran2,[0.,0.,0.],boxinfo)
-      call ompscale(pos,3,nran2,[fs,fs,fs])
-      call massassign(nran2,pos,L,rden,painter)  ! get delta_r
-      deallocate(pos)
-    else
-      call readfield(infr2,L,rden)
+    fsvec=[0.,0.,0.]
+    call ompshift(pos,3,ngal2,fsvec,boxinfo)
+    call massassign(ngal2,pos,L,den1,painter2)  ! den1 -> delta_g (2nd)
+  
+    if (interlace2) then
+      fsvec=[0.5,0.5,0.5]
+      call ompshift(pos,3,ngal2,fsvec,boxinfo)
+      call massassign(ngal2,pos,L,den2,painter2)  ! den2 -> delta_g (2nd, interlace)
     endif
   
-    gden=gden-rden
+    deallocate(pos)
+  else
+    call readfield(infg2,L,den1)
+  endif
+  
+  vc2(1:L,:,:)=den1  ! vc2 -> delta_g (2nd)
+  if (interlace2) vc3(1:L,:,:)=den2  ! vc3 -> delta_g (2nd, interlace)
+  
+  !! random catalog/field 2
+  if (flag_r2) then
+    if (flag_rcata2) then
+      allocate(pos(3,nran2))
+      call readcata(infr2,nrhead2,nran2,pos,rxyz2)
+      fsvec=LL/box
+      call ompscale(pos,3,nran2,fsvec)
+  
+      fsvec=[0.,0.,0.]
+      call ompshift(pos,3,nran2,fsvec,boxinfo)
+      call massassign(nran2,pos,L,den1,painter2)  ! den1 -> delta_r (2nd)
+  
+      if (interlace) then
+        fsvec=[0.5,0.5,0.5]
+        call ompshift(pos,3,nran2,fsvec,boxinfo)
+        call massassign(nran2,pos,L,den2,painter2)  ! den2 -> delta_r (2nd, interlace)
+      endif
+  
+      deallocate(pos)
+    else
+      call readfield(infr2,L,den2)
+    endif
+  
+    vc2(1:L,:,:)=vc2(1:L,:,:)-den1  ! vc2 -> delta_g-delta_r (2nd)
+    if (interlace2) vc3(1:L,:,:)=vc3(1:L,:,:)-den2 ! vc3 -> delta_g-delta_r (2nd, interlace)
   endif
 
-  vc2(1:L,:,:)=gden
-  call fftr2c_inplace(vc2,LL)  ! get delta(k)
+  call fftr2c_inplace(vc2,LL)  ! vc2 -> delta(k) (2nd)
+  if (interlace2) then
+    call fftr2c_inplace(vc3,LL)  ! vc3 -> delta(k) (2nd, interlace)
+    fsvec=box/LL/2
+    call phaseshift(vc3,LL,fsvec)  ! correct interlace phase shift
+    vc2=(vc2+vc3)/2  ! vc2 -> delta(k) (2nd, interlaced)
+  endif
+endif
 
+!! 3D power spectrum
+if (second) then
   call adjustdata(vc1,vc2,vc3,LL)
 else
   call adjustdata(vc1,vc1,vc3,LL)
 endif
+
 
 if (sncorr) then
   pp=0
@@ -209,12 +271,12 @@ if (command.eq.0) then
     write(*,*) 'memo for pos:',(float(npmax)*3)*4/1024.**3,'G'
   endif
 
-  write(*,*) 'memo for gden:',(float(L)**3)*8/1024.**3,'G'
-  allocate(gden(L,L,L))
+  write(*,*) 'memo for den1:',(float(L)**3)*8/1024.**3,'G'
+  allocate(den1(L,L,L))
 
-  if (flag_r.or.flag_r2) then
-    write(*,*) 'memo for rden:',(float(L)**3)*8/1024.**3,'G'
-    allocate(rden(L,L,L))
+  if (interlace) then
+    write(*,*) 'memo for den2:',(float(L)**3)*8/1024.**3,'G'
+    allocate(den2(L,L,L))
   endif
 
   write(*,*) 'memo for vc1:',(float(L+2)*L*L)*4/1024.**3,'G'
@@ -231,9 +293,9 @@ if (command.eq.0) then
   allocate(pk8(9,kbin))
   if (flag_pk2d) allocate(pk2d(7,kbin,ubin))
 elseif(command.eq.1) then
-  deallocate(gden)
+  deallocate(den1)
   if (flag_r.or.flag_r2) then
-    deallocate(rden)
+    deallocate(den2)
   endif
   deallocate(vc1)
   if (second) deallocate(vc2)
@@ -624,6 +686,40 @@ subroutine normalization(vc,LL,pp)
   enddo
   !$omp end parallel do
 endsubroutine normalization
+
+subroutine phaseshift(vc,LL,x0)
+  implicit none
+  integer(4)::LL(3)
+  real(4)::vc(LL(1)+2,LL(2),LL(3))
+  complex(4)::cc
+  real(4)::x0(3)
+  real(4)::ri,rj,rk
+  integer(4)::i,j,k
+  do k=1,LL(3)
+    if (k.le.LL(3)/2+1) then
+      rk=k-1
+    else
+      rk=k-1-LL(3)
+    endif
+    rk=kbasic*rk
+    do j=1,LL(2)
+      if (j.le.LL(2)/2+1) then
+        rj=j-1
+      else
+        rj=j-1-LL(2)
+      endif
+      rj=kbasic*rj
+      do i=1,LL(1)+2,2
+        ri=i/2
+        ri=kbasic*ri
+  
+        cc=cmplx(vc(i,j,k),vc(i+1,j,k))
+        cc=cc*exp(sum(x0*[ri,rj,rk])*cmplx(0.,1.))
+        vc(i:i+1,j,k)=[real(cc),aimag(cc)]
+      enddo
+    enddo
+  enddo
+  endsubroutine phaseshift
 
 
 endprogram FFTps

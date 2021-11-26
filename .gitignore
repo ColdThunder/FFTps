@@ -1,0 +1,10 @@
+data/*
+backup
+!.gitkeep
+plot/.ipynb_checkpoints
+
+*.mod
+*.out
+*.o
+*.swp
+
