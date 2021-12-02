@@ -5,10 +5,9 @@ use p2grid
 use head
 implicit none
 
-integer(4)::LL(3)
+integer(4)::LL(3),LLk(3)
 real(4),allocatable::pos(:,:)
-real(8),allocatable::den1(:,:,:)
-real(8),allocatable::den2(:,:,:)
+real(8),allocatable::den8(:,:,:)
 real(4),allocatable::vc1(:,:,:)
 real(4),allocatable::vc2(:,:,:)
 real(4),allocatable::vc3(:,:,:)
@@ -33,9 +32,11 @@ real(4)::kbasic
 
 call omp_set_num_threads(NUM_THREADS)
 
+call basiccheck
 call binscheme 
 
 LL=[L,L,L]
+LLk=[L+2,L,L]
 boxinfo=reshape([0,LL(1),0,LL(2),0,LL(3)],[2,3])
 
 call memo(0)
@@ -49,21 +50,21 @@ if (flag_gcata) then
 
   fsvec=[0.,0.,0.]
   call ompshift(pos,3,ngal,fsvec,boxinfo)
-  call massassign(ngal,pos,L,den1,painter)  ! den1 -> delta_g
+  call massassign(ngal,pos,L,den8,painter)  ! den8 -> delta_g
+  call ompcopy3d(den8,vc1(1:LL(1),:,:),LL)  ! vc1 -> delta_g
 
   if (interlace) then
     fsvec=[0.5,0.5,0.5]
     call ompshift(pos,3,ngal,fsvec,boxinfo)
-    call massassign(ngal,pos,L,den2,painter)  ! den2 -> delta_g(interlace)
+    call massassign(ngal,pos,L,den8,painter)  ! den8 -> delta_g(interlace)
+    call ompcopy3d(den8,vc3(1:LL(1),:,:),LL)  ! vc3 -> delta_g(interlace)
   endif
 
   deallocate(pos)
 else
-  call readfield(infg,L,den1)
+  call readfield(infg,LL,vc1(1:LL(1),:,:))  ! vc1 -> delta_g, if the input is field
 endif
-
-vc1(1:L,:,:)=den1  ! vc1 -> delta_g
-if (interlace) vc3(1:L,:,:)=den2  ! vc3 -> delta_g(interlace)
+! anyway (input catalog or field), vc1 -> delta_g, vc3 -> delta_g (interlace)
 
 !! random catalog/field 1
 if (flag_r) then
@@ -75,21 +76,23 @@ if (flag_r) then
 
     fsvec=[0.,0.,0.]
     call ompshift(pos,3,nran,fsvec,boxinfo)
-    call massassign(nran,pos,L,den1,painter)  ! den1 -> delta_r
+    call massassign(nran,pos,L,den8,painter)  ! den8 -> delta_r
+    call ompminus3d(vc1(1:LL(1),:,:),den8,LL)  ! vc1 -> delta_g-delta_r
 
     if (interlace) then
       fsvec=[0.5,0.5,0.5]
       call ompshift(pos,3,nran,fsvec,boxinfo)
-      call massassign(nran,pos,L,den2,painter)  ! den2 -> delta_r (interlace)
+      call massassign(nran,pos,L,den8,painter)  ! den8 -> delta_r (interlace)
+      call ompminus3d(vc3(1:LL(1),:,:),den8,LL)  ! vc3 -> delta_g-delta_r (interlace)
     endif
 
     deallocate(pos)
   else
-    call readfield(infr,L,den2)
+    call readfield(infr,LL,vc3(1:LL(1),:,:))  ! vc3 -> delta_r, if the input is field
+    call ompminus3d(vc1(1:LL(1),:,:),vc3(1:LL(1),:,:),LL) ! vc1 -> delta_g-delta_r
   endif
+  ! anyway (input catalog or field), vc1 -> delta_g-delta_r, vc3 -> delta_g-delta_r (interlace)
 
-  vc1(1:L,:,:)=vc1(1:L,:,:)-den1  ! vc1 -> delta_g-delta_r
-  if (interlace) vc3(1:L,:,:)=vc3(1:L,:,:)-den2  ! vc3 -> delta_g-delta_r (interlace)
 endif
 
 call fftr2c_inplace(vc1,LL)  ! vc1 -> delta(k)
@@ -97,8 +100,10 @@ if (interlace) then
   call fftr2c_inplace(vc3,LL)  ! vc3 -> delta(k) (interlace)
   fsvec=box/LL/2
   call phaseshift(vc3,LL,fsvec)  ! correct interlace phase shift
-  vc1=(vc1+vc3)/2   ! vc1 -> delta(k) (interlaced)
+  call ompplus3d(vc1,vc3,LLk)
+  call omptimes3d(vc1,0.5,LLk)  ! vc1 -> delta(k) (interlaced)
 endif
+! anyway (interlace or not), vc1 -> delta(k), vc3 is free
 
 !!! second field
 if (second) then
@@ -111,21 +116,21 @@ if (second) then
   
     fsvec=[0.,0.,0.]
     call ompshift(pos,3,ngal2,fsvec,boxinfo)
-    call massassign(ngal2,pos,L,den1,painter2)  ! den1 -> delta_g (2nd)
+    call massassign(ngal2,pos,L,den8,painter2)  ! den8 -> delta_g (2nd)
+    call ompcopy3d(den8,vc2(1:LL(1),:,:),LL)  ! vc2 -> delta_g (2nd)
   
     if (interlace2) then
       fsvec=[0.5,0.5,0.5]
       call ompshift(pos,3,ngal2,fsvec,boxinfo)
-      call massassign(ngal2,pos,L,den2,painter2)  ! den2 -> delta_g (2nd, interlace)
+      call massassign(ngal2,pos,L,den8,painter2)  ! den8 -> delta_g (2nd, interlace)
+      call ompcopy3d(den8,vc3(1:LL(1),:,:),LL)  ! vc3 -> delta_g (2nd, interlace)
     endif
   
     deallocate(pos)
   else
-    call readfield(infg2,L,den1)
+    call readfield(infg2,LL,vc2(1:LL(1),:,:)) ! vc2 -> delta_g (2nd), if the input is field
   endif
-  
-  vc2(1:L,:,:)=den1  ! vc2 -> delta_g (2nd)
-  if (interlace2) vc3(1:L,:,:)=den2  ! vc3 -> delta_g (2nd, interlace)
+  ! anyway (input catalog or field), vc2 -> delta_g (2nd), vc3 -> delta_g (2nd, interlace)
   
   !! random catalog/field 2
   if (flag_r2) then
@@ -137,21 +142,23 @@ if (second) then
   
       fsvec=[0.,0.,0.]
       call ompshift(pos,3,nran2,fsvec,boxinfo)
-      call massassign(nran2,pos,L,den1,painter2)  ! den1 -> delta_r (2nd)
+      call massassign(nran2,pos,L,den8,painter2)  ! den8 -> delta_r (2nd)
+      call ompminus3d(vc2(1:LL(1),:,:),den8,LL)  ! vc2 -> delta_g-delta_r (2nd)
   
-      if (interlace) then
+      if (interlace2) then
         fsvec=[0.5,0.5,0.5]
         call ompshift(pos,3,nran2,fsvec,boxinfo)
-        call massassign(nran2,pos,L,den2,painter2)  ! den2 -> delta_r (2nd, interlace)
+        call massassign(nran2,pos,L,den8,painter2)  ! den8 -> delta_r (2nd, interlace)
+        call ompminus3d(vc3(1:LL(1),:,:),den8,LL) ! vc3 -> delta_g-delta_r (2nd, interlace)
       endif
   
       deallocate(pos)
     else
-      call readfield(infr2,L,den2)
+      call readfield(infr2,LL,vc3(1:LL(1),:,:))
+      call ompminus3d(vc2(1:LL(1),:,:),vc3(1:LL(1),:,:),LL)
     endif
+    ! anyway (input catalog or field), vc2 -> delta_g-delta_r (2nd), vc3 -> delta_g-delta_r (2nd, interlace)
   
-    vc2(1:L,:,:)=vc2(1:L,:,:)-den1  ! vc2 -> delta_g-delta_r (2nd)
-    if (interlace2) vc3(1:L,:,:)=vc3(1:L,:,:)-den2 ! vc3 -> delta_g-delta_r (2nd, interlace)
   endif
 
   call fftr2c_inplace(vc2,LL)  ! vc2 -> delta(k) (2nd)
@@ -159,9 +166,18 @@ if (second) then
     call fftr2c_inplace(vc3,LL)  ! vc3 -> delta(k) (2nd, interlace)
     fsvec=box/LL/2
     call phaseshift(vc3,LL,fsvec)  ! correct interlace phase shift
-    vc2=(vc2+vc3)/2  ! vc2 -> delta(k) (2nd, interlaced)
+    call ompplus3d(vc2,vc3,LLk)
+    call omptimes3d(vc2,0.5,LLk)  ! vc2 -> delta(k) (2nd, interlaced)
   endif
+  ! anyway (interlace or not), vc2 -> delta(k) (2nd), vc3 is free
 endif
+
+!! all the input is done
+!! galaxy catalogue or galaxy+random catalogyes
+!! input catalogue or input fields
+!! 1 input for 2 inputs
+!! interlace or not
+
 
 !! 3D power spectrum
 if (second) then
@@ -211,6 +227,19 @@ if (flag_pk2d) call calcpkmu(vc3,LL,pk2d,kbin,ubin,outname2)
 call memo(1)
 
 contains
+
+subroutine basiccheck
+  implicit none
+  character(512)::message
+
+  ! interlace conflicts with input density field
+  message='ERROR: interlace can only be used on catalogue'
+  if (interlace.and. (.not.flag_gcata)) write(*,*) trim(message)//' (The input is a galaxy density FIELD 1)'
+  if (interlace.and. (.not.flag_rcata)) write(*,*) trim(message)//' (The input is a random density FIELD 1)'
+  if (second.and.interlace2.and. (.not.flag_gcata2)) write(*,*) trim(message)//' (The input is a galaxy density FIELD 2)'
+  if (second.and.interlace2.and. (.not.flag_rcata2)) write(*,*) trim(message)//' (The input is a random density FIELD 2)'
+  stop
+endsubroutine basiccheck
 
 subroutine binscheme
   implicit none
@@ -271,35 +300,26 @@ if (command.eq.0) then
     write(*,*) 'memo for pos:',(float(npmax)*3)*4/1024.**3,'G'
   endif
 
-  write(*,*) 'memo for den1:',(float(L)**3)*8/1024.**3,'G'
-  allocate(den1(L,L,L))
+  write(*,*) 'memo for den8:',product(real(LL))*8/1024.**3,'G'
+  allocate(den8(L,L,L))
 
-  if (interlace) then
-    write(*,*) 'memo for den2:',(float(L)**3)*8/1024.**3,'G'
-    allocate(den2(L,L,L))
-  endif
-
-  write(*,*) 'memo for vc1:',(float(L+2)*L*L)*4/1024.**3,'G'
+  write(*,*) 'memo for vc1:',(float(LL(1)+2)*LL(2)*LL(3))*4/1024.**3,'G'
   allocate(vc1(L+2,L,L))
 
   if (second) then
-    write(*,*) 'memo for vc2:',(float(L+2)*L*L)*4/1024.**3,'G'
+    write(*,*) 'memo for vc2:',(float(LL(1)+2)*LL(2)*LL(3))*4/1024.**3,'G'
     allocate(vc2(L+2,L,L))
   endif
 
-  write(*,*) 'memo for vc3:',(float(L+2)*L*L)*4/1024.**3,'G'
+  write(*,*) 'memo for vc3:',(float(LL(1)+2)*LL(2)*LL(3))*4/1024.**3,'G'
   allocate(vc3(L+2,L,L))
 
   allocate(pk8(9,kbin))
   if (flag_pk2d) allocate(pk2d(7,kbin,ubin))
 elseif(command.eq.1) then
-  deallocate(den1)
-  if (flag_r.or.flag_r2) then
-    deallocate(den2)
-  endif
+  deallocate(den8)
   deallocate(vc1)
   if (second) deallocate(vc2)
-
   deallocate(vc3)
 
   deallocate(pk8)
@@ -333,17 +353,16 @@ subroutine readcata(filename,nhead,np,pos,col)
   deallocate(line)
 endsubroutine readcata
 
-subroutine readfield(filename,ng,den)
+subroutine readfield(filename,LL,den)
   implicit none
   character(*)::filename
-  integer(4)::ng
-  real(8)::den(ng,ng,ng)
+  integer(4)::LL(3)
+  real(4)::den(LL(1),LL(2),LL(3))
 
   write(*,*) 'reading: ',trim(filename)
   open(31,file=filename,status='old',access='stream')
-  read(31) vc1(1:ng,1:ng,1:ng)
+  read(31) den(1:LL(1),1:LL(2),1:LL(3))
   close(31)
-  den=vc1(1:ng,1:ng,1:ng)
 endsubroutine readfield
 
 subroutine calcpkell(vc,LL,pk8,kbin,filename)

@@ -11,11 +11,11 @@ interface ompplus3d
 endinterface ompplus3d
 
 interface ompminus3d
-  module procedure ompminus3dr4r4
+  module procedure ompminus3dr4r4,ompminus3dr4r8,ompminus3dr8r4,ompminus3dr8r8
 endinterface ompminus3d
 
 interface omptimes3d
-  module procedure omptimes3dr4r4f
+  module procedure omptimes3dr4f
   module procedure omptimes3dr4r4
 endinterface omptimes3d
 
@@ -92,10 +92,49 @@ enddo
 !$omp end parallel do
 endsubroutine ompminus3dr4r4
 
+subroutine ompminus3dr4r8(den1,den2,LL)
+  implicit none
+  integer(4)::LL(3)
+  real(4)::den1(LL(1),LL(2),LL(3))
+  real(8)::den2(LL(1),LL(2),LL(3))
+  integer(4)::k
+  !$omp parallel do default(shared)
+  do k=1,LL(3)
+    den1(:,:,k)=den1(:,:,k)-den2(:,:,k)
+  enddo
+  !$omp end parallel do
+endsubroutine ompminus3dr4r8
+
+subroutine ompminus3dr8r4(den1,den2,LL)
+  implicit none
+  integer(4)::LL(3)
+  real(8)::den1(LL(1),LL(2),LL(3))
+  real(4)::den2(LL(1),LL(2),LL(3))
+  integer(4)::k
+  !$omp parallel do default(shared)
+  do k=1,LL(3)
+    den1(:,:,k)=den1(:,:,k)-den2(:,:,k)
+  enddo
+  !$omp end parallel do
+endsubroutine ompminus3dr8r4
+
+subroutine ompminus3dr8r8(den1,den2,LL)
+  implicit none
+  integer(4)::LL(3)
+  real(8)::den1(LL(1),LL(2),LL(3))
+  real(8)::den2(LL(1),LL(2),LL(3))
+  integer(4)::k
+  !$omp parallel do default(shared)
+  do k=1,LL(3)
+    den1(:,:,k)=den1(:,:,k)-den2(:,:,k)
+  enddo
+  !$omp end parallel do
+endsubroutine ompminus3dr8r8
+
 !!!!! =====================================
 !!!!! OMPTIMES3D
 !!!!! =====================================
-subroutine omptimes3dr4r4f(den1,a,LL)
+subroutine omptimes3dr4f(den1,a,LL)
 implicit none
 integer(4)::LL(3)
 real(4)::den1(LL(1),LL(2),LL(3))
@@ -106,7 +145,7 @@ do k=1,LL(3)
   den1(:,:,k)=den1(:,:,k)*a
 enddo
 !$omp end parallel do
-endsubroutine omptimes3dr4r4f
+endsubroutine omptimes3dr4f
 
 subroutine omptimes3dr4r4(den1,den2,LL)
 implicit none
