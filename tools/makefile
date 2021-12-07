@@ -1,11 +1,11 @@
 ########################################################################
 #                                Makefile
 #
-EXEC = 3dps.out
+EXEC = outputwincorr.out
 
-SRCS = 3dps.f90
+SRCS = outputwincorr.f90
 
-MODSRCS = head.f90 myomp.f90 p2grid.f90
+MODSRCS = head.f90 myomp.f90
 
 MODS = $(MODSRCS:.f90=.mod)
 

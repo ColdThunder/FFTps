@@ -29,6 +29,7 @@ logical(4)::debug=.false.
 real(4),parameter::pi=4.*atan(1.)
 real(4)::kbasic
 
+write(*,*) 'calculating power spectrum using FFT'
 
 call omp_set_num_threads(NUM_THREADS)
 
@@ -234,11 +235,22 @@ subroutine basiccheck
 
   ! interlace conflicts with input density field
   message='ERROR: interlace can only be used on catalogue'
-  if (interlace.and. (.not.flag_gcata)) write(*,*) trim(message)//' (The input is a galaxy density FIELD 1)'
-  if (interlace.and. (.not.flag_rcata)) write(*,*) trim(message)//' (The input is a random density FIELD 1)'
-  if (second.and.interlace2.and. (.not.flag_gcata2)) write(*,*) trim(message)//' (The input is a galaxy density FIELD 2)'
-  if (second.and.interlace2.and. (.not.flag_rcata2)) write(*,*) trim(message)//' (The input is a random density FIELD 2)'
-  stop
+  if (interlace.and. (.not.flag_gcata)) then
+    write(*,*) trim(message)//' (The input is a galaxy density FIELD 1)'
+    stop
+  endif
+  if (interlace.and. (.not.flag_rcata)) then
+    write(*,*) trim(message)//' (The input is a random density FIELD 1)'
+    stop
+  endif
+  if (second.and.interlace2.and. (.not.flag_gcata2)) then
+    write(*,*) trim(message)//' (The input is a galaxy density FIELD 2)'
+    stop
+  endif
+  if (second.and.interlace2.and. (.not.flag_rcata2)) then
+    write(*,*) trim(message)//' (The input is a random density FIELD 2)'
+    stop
+  endif
 endsubroutine basiccheck
 
 subroutine binscheme
@@ -587,13 +599,15 @@ subroutine subtractnoise(vc,LL,npeff,pp)
   real(4)::npeff
   integer(4)::pp
   real(4)::hpi(3),a1,a2,a3,d2,ri,rj,rk
+  real(4)::wx(LL(1)/2+1),wy(LL(2)),wz(LL(3))
   if (npeff.eq.0) then
     write(*,*) 'can not correct shot noise with unknown particle number'
     return
   endif
   write(*,*) 'shot noise is corrected'
   hpi=pi/float(LL)
-  !$omp parallel do default(private) shared(vc,hpi,LL,npeff,painter,pp) schedule(static)
+
+  !$omp parallel do default(private) shared(hpi,LL,pp,wz) schedule(static)
   do k=1,LL(3)
     if (k.le.LL(3)/2+1) then
       rk=k-1
@@ -601,23 +615,36 @@ subroutine subtractnoise(vc,LL,npeff,pp)
       rk=k-1-LL(3)
     endif
     a3=sin(hpi(3)*rk)
-    a3=wcorr(a3,pp)
+    wz(k)=wcorr(a3,pp)
+  enddo
+  !$omp end parallel do
 
+  !$omp parallel do default(private) shared(hpi,LL,pp,wy) schedule(static)
+  do j=1,LL(2)
+    if (j.le.LL(2)/2+1) then
+      rj=j-1
+    else
+      rj=j-1-LL(2)
+    endif
+    a2=sin(hpi(2)*rj)
+    wy(j)=wcorr(a2,pp)
+  enddo
+  !$omp end parallel do
+
+  !$omp parallel do default(private) shared(hpi,LL,pp,wx) schedule(static)
+  do i=1,LL(1)+2,2
+    ri=i/2
+    a1=sin(hpi(1)*ri)
+    wx(i/2+1)=wcorr(a1,pp)
+  enddo
+  !$omp end parallel do
+
+  !$omp parallel do default(private) shared(vc,wx,wy,wz,LL,npeff) schedule(static)
+  do k=1,LL(3)
     do j=1,LL(2)
-      if (j.le.LL(2)/2+1) then
-        rj=j-1
-      else
-        rj=j-1-LL(2)
-      endif
-      a2=sin(hpi(2)*rj)
-      a2=wcorr(a2,pp)
-
       do i=1,LL(1)+2,2
-        ri=i/2
-        a1=sin(hpi(1)*ri)
-        a1=wcorr(a1,pp)
-
-        vc(i:i+1,j,k)=vc(i:i+1,j,k)-a1*a2*a3/npeff
+        d2 = wx(i/2+1)*wy(j)*wz(k)
+        vc(i:i+1,j,k)=vc(i:i+1,j,k)-d2/npeff
       enddo
     enddo
   enddo
@@ -650,11 +677,105 @@ function wcorr(aa,pp)
   endif
 endfunction wcorr
 
+subroutine subtractnoise_interlace(vc,LL,npeff,pp)
+  implicit none
+  integer(4)::LL(3)
+  real(4)::vc(LL(1)+2,LL(2),LL(3))
+  real(4)::npeff
+  integer(4)::pp
+  real(4)::hpi(3),a1,a2,a3,d2,ri,rj,rk
+  real(4)::wx(LL(1)/2+1,2),wy(LL(2),2),wz(LL(3),2)
+  if (npeff.eq.0) then
+    write(*,*) 'can not correct shot noise with unknown particle number'
+    return
+  endif
+  write(*,*) 'shot noise is corrected (interlaced)'
+  write(*,*) 'pp=',pp
+  write(*,*) 'npeff=',npeff
+  hpi=pi/float(LL)
+
+  !$omp parallel do default(private) shared(LL,hpi,wz,pp) schedule(static)
+  do k=1,LL(3)
+    if (k.le.LL(3)/2+1) then
+      rk=k-1
+    else
+      rk=k-1-LL(3)
+    endif
+    a3=hpi(3)*rk/2
+    wz(k,1:2)=wcorr_interlace(a3,pp)
+  enddo
+  !$omp end parallel do
+
+  !$omp parallel do default(private) shared(LL,hpi,wy,pp) schedule(static)
+  do j=1,LL(2)
+    if (j.le.LL(2)/2+1) then
+      rj=j-1
+    else
+      rj=j-1-LL(2)
+    endif
+    a2=hpi(2)*rj/2
+    wy(j,1:2)=wcorr_interlace(a2,pp)
+  enddo
+  !$omp end parallel do
+
+  !$omp parallel do default(private) shared(LL,hpi,wx,pp) schedule(static)
+  do i=1,LL(1)+2,2
+    ri=i/2
+    a1=hpi(1)*ri/2
+    wx(i/2+1,1:2)=wcorr_interlace(a1,pp)
+  enddo
+  !$omp end parallel do
+
+  !$omp parallel do default(private) shared(vc,LL,wx,wy,wz,npeff) schedule(static)
+  do k=1,LL(3)
+    do j=1,LL(2)
+      do i=1,LL(1)+2,2
+        d2= wx(i/2+1,1)*wy(j,1)*wz(k,1) + wx(i/2+1,1)*wy(j,2)*wz(k,2) + wx(i/2+1,2)*wy(j,1)*wz(k,2) + wx(i/2+1,2)*wy(j,2)*wz(k,1)
+        vc(i:i+1,j,k)=vc(i:i+1,j,k)-d2/npeff
+      enddo
+    enddo
+  enddo
+  !$omp end parallel do
+endsubroutine subtractnoise_interlace
+
+function wcorr_interlace(aa,pp)
+  implicit none
+  real(4)::wcorr_interlace(2)
+  real(4)::aa
+  integer(4)::pp
+  real(4)::sinx,cosx
+  sinx=sin(aa)
+  cosx=cos(aa)
+
+  if (pp.eq.2) then
+    wcorr_interlace(1)=cosx**2
+    wcorr_interlace(2)=sinx**2
+  !elseif (pp.eq.3) then
+  !  wcorr_interlace_new(1)=coshx**4
+  elseif (pp.eq.4) then
+    wcorr_interlace(1)=(1-2./3*sinx**2)*cosx**4
+    wcorr_interlace(2)=(1-2./3*cosx**2)*sinx**4
+  !elseif (pp.eq.5) then
+  !  wcorr_interlace_new(1)=(1-1./3*sinhx**2)*coshx**6
+  elseif (pp.eq.6) then
+    wcorr_interlace(1)=(1-sinx**2+2./15*sinx**4)*cosx**6
+    wcorr_interlace(2)=(1-cosx**2+2./15*cosx**4)*sinx**6
+  !elseif (pp.eq.7) then
+  !  wcorr_interlace_new(1)=(1-2./3*sinhx**2+2./45*sinhx**4)*coshx**8
+  elseif(pp.eq.8) then
+    wcorr_interlace(1)=(1-4./3*sinx**2+2./5*sinx**4-4./315*sinx**6)*cosx**8
+    wcorr_interlace(2)=(1-4./3*cosx**2+2./5*cosx**4-4./315*cosx**6)*sinx**8
+  else
+    wcorr_interlace(1:2)=1
+  endif
+endfunction wcorr_interlace
+
 subroutine normalization(vc,LL,pp)
   implicit none
   integer(4)::LL(3)
   real(4)::vc(LL(1)+2,LL(2),LL(3))
   real(4)::hpi(3),a1,a2,a3,d2,ri,rj,rk
+  real(4)::wx(LL(1)/2+1),wy(LL(2)),wz(LL(3))
   integer(4)::pp
   if (pp.eq.0) then
     write(*,*) 'no window function correction'
@@ -662,43 +783,45 @@ subroutine normalization(vc,LL,pp)
   endif
   write(*,*) 'window function is deconvolved, pp=',pp
   hpi=pi/float(LL)
-  !$omp parallel do default(private) shared(vc,hpi,LL,pp) schedule(static)
-  do k=1,LL(3)
+
+  wz(0)=1
+  !$omp parallel do default(private) shared(hpi,LL,wz) schedule(static)
+  do k=2,LL(3)
     if (k.le.LL(3)/2+1) then
       rk=k-1
     else
       rk=k-1-LL(3)
     endif
     a3=hpi(3)*rk
-    if (a3.eq.0.) then
-      a3=1.
-    else
-      a3=sin(a3)/a3
-    endif
-  
-    do j=1,LL(2)
-      if (j.le.LL(2)/2+1) then
-        rj=j-1
-      else
-        rj=j-1-LL(2)
-      endif
-      a2=hpi(2)*rj
-      if (a2.eq.0.) then
-        a2=1.
-      else
-        a2=sin(a2)/a2
-      endif
+    wz(k)=sin(a3)/a3
+  enddo
+  !$omp end parallel do
 
+  !$omp parallel do default(private) shared(hpi,LL,wy) schedule(static)
+  do j=1,LL(2)
+    if (j.le.LL(2)/2+1) then
+      rj=j-1
+    else
+      rj=j-1-LL(2)
+    endif
+    a2=hpi(2)*rj
+    wy(j)=sin(a2)/a2
+  enddo
+  !$omp end parallel do
+
+  !$omp parallel do default(private) shared(hpi,LL,wx) schedule(static)
+  do i=1,LL(1)+2,2
+    ri=i/2
+    a1=hpi(1)*ri
+    wx(i/2+1)=sin(a1)/a1
+  enddo
+  !$omp end parallel do
+
+  !$omp parallel do default(private) shared(vc,wx,wy,wz,pp) schedule(static)
+  do k=1,LL(3)
+    do j=1,LL(2)
       do i=1,LL(1)+2,2
-        ri=i/2
-        a1=hpi(1)*ri
-        if (a1.eq.0.) then
-          a1=1.
-        else
-          a1=sin(a1)/a1
-        endif
-  
-        d2=(a1*a2*a3)**pp
+        d2=(wx(i/2+1)*wy(j)*wz(k))**pp
         vc(i:i+1,j,k)=vc(i:i+1,j,k)/d2
       enddo
     enddo
