@@ -8,3 +8,4 @@ plot/.ipynb_checkpoints
 *.o
 *.swp
 
+.vscode/*
