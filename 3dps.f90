@@ -5,7 +5,7 @@ use p2grid
 use head
 implicit none
 
-integer(4)::LL(3),LLk(3)
+integer(4)::LLk(3)
 real(4),allocatable::pos(:,:)
 real(8),allocatable::den8(:,:,:)
 real(4),allocatable::vc1(:,:,:)
@@ -27,7 +27,7 @@ integer(4)::pp
 logical(4)::debug=.false.
 
 real(4),parameter::pi=4.*atan(1.)
-real(4)::kbasic
+real(4)::kbasic(3)
 
 write(*,*) 'calculating power spectrum using FFT'
 
@@ -36,8 +36,7 @@ call omp_set_num_threads(NUM_THREADS)
 call basiccheck
 call binscheme 
 
-LL=[L,L,L]
-LLk=[L+2,L,L]
+LLk=[LL(1)+2,LL(2),LL(3)]
 boxinfo=reshape([0,LL(1),0,LL(2),0,LL(3)],[2,3])
 
 call memo(0)
@@ -51,13 +50,13 @@ if (flag_gcata) then
 
   fsvec=[0.,0.,0.]
   call ompshift(pos,3,ngal,fsvec,boxinfo)
-  call massassign(ngal,pos,L,den8,painter)  ! den8 -> delta_g
+  call massassign(ngal,pos,LL,den8,painter)  ! den8 -> delta_g
   call ompcopy3d(den8,vc1(1:LL(1),:,:),LL)  ! vc1 -> delta_g
 
   if (interlace) then
     fsvec=[0.5,0.5,0.5]
     call ompshift(pos,3,ngal,fsvec,boxinfo)
-    call massassign(ngal,pos,L,den8,painter)  ! den8 -> delta_g(interlace)
+    call massassign(ngal,pos,LL,den8,painter)  ! den8 -> delta_g(interlace)
     call ompcopy3d(den8,vc3(1:LL(1),:,:),LL)  ! vc3 -> delta_g(interlace)
   endif
 
@@ -77,13 +76,13 @@ if (flag_r) then
 
     fsvec=[0.,0.,0.]
     call ompshift(pos,3,nran,fsvec,boxinfo)
-    call massassign(nran,pos,L,den8,painter)  ! den8 -> delta_r
+    call massassign(nran,pos,LL,den8,painter)  ! den8 -> delta_r
     call ompminus3d(vc1(1:LL(1),:,:),den8,LL)  ! vc1 -> delta_g-delta_r
 
     if (interlace) then
       fsvec=[0.5,0.5,0.5]
       call ompshift(pos,3,nran,fsvec,boxinfo)
-      call massassign(nran,pos,L,den8,painter)  ! den8 -> delta_r (interlace)
+      call massassign(nran,pos,LL,den8,painter)  ! den8 -> delta_r (interlace)
       call ompminus3d(vc3(1:LL(1),:,:),den8,LL)  ! vc3 -> delta_g-delta_r (interlace)
     endif
 
@@ -117,13 +116,13 @@ if (second) then
   
     fsvec=[0.,0.,0.]
     call ompshift(pos,3,ngal2,fsvec,boxinfo)
-    call massassign(ngal2,pos,L,den8,painter2)  ! den8 -> delta_g (2nd)
+    call massassign(ngal2,pos,LL,den8,painter2)  ! den8 -> delta_g (2nd)
     call ompcopy3d(den8,vc2(1:LL(1),:,:),LL)  ! vc2 -> delta_g (2nd)
   
     if (interlace2) then
       fsvec=[0.5,0.5,0.5]
       call ompshift(pos,3,ngal2,fsvec,boxinfo)
-      call massassign(ngal2,pos,L,den8,painter2)  ! den8 -> delta_g (2nd, interlace)
+      call massassign(ngal2,pos,LL,den8,painter2)  ! den8 -> delta_g (2nd, interlace)
       call ompcopy3d(den8,vc3(1:LL(1),:,:),LL)  ! vc3 -> delta_g (2nd, interlace)
     endif
   
@@ -143,13 +142,13 @@ if (second) then
   
       fsvec=[0.,0.,0.]
       call ompshift(pos,3,nran2,fsvec,boxinfo)
-      call massassign(nran2,pos,L,den8,painter2)  ! den8 -> delta_r (2nd)
+      call massassign(nran2,pos,LL,den8,painter2)  ! den8 -> delta_r (2nd)
       call ompminus3d(vc2(1:LL(1),:,:),den8,LL)  ! vc2 -> delta_g-delta_r (2nd)
   
       if (interlace2) then
         fsvec=[0.5,0.5,0.5]
         call ompshift(pos,3,nran2,fsvec,boxinfo)
-        call massassign(nran2,pos,L,den8,painter2)  ! den8 -> delta_r (2nd, interlace)
+        call massassign(nran2,pos,LL,den8,painter2)  ! den8 -> delta_r (2nd, interlace)
         call ompminus3d(vc3(1:LL(1),:,:),den8,LL) ! vc3 -> delta_g-delta_r (2nd, interlace)
       endif
   
@@ -207,7 +206,11 @@ if (sncorr) then
     endif
     pp=pp+painter*2
   endif
-  call subtractnoise(vc3,LL,npeff,pp)
+  if (interlace) then
+    call subtractnoise_interlace(vc3,LL,npeff,pp)
+  else
+    call subtractnoise(vc3,LL,npeff,pp)
+  endif
 else
   write(*,*) 'shot noise is not corrected'
 endif
@@ -256,26 +259,27 @@ endsubroutine basiccheck
 subroutine binscheme
   implicit none
   kbasic=2*pi/box
-  write(*,'(a,f8.3,a,f8.3)') 'kbasic=',kbasic,'  knyquist=',kbasic*L/2
+  write(*,'(a,3f8.3)') 'kbasic=',kbasic
+  write(*,'(a,3f8.3)') 'knyquist=',kbasic*LL/2
   if (kbin.eq.0.and.dk.eq.0.) then
     write(*,*) 'ERROR: kbin and dk cannot to 0 in the same time'
     stop
   endif
 
-  if (usedefaulkminkmax) then
+  if (usedefaultkminkmax) then
     if (logbin) then
-      kmax=alog10(kbasic*L/2)
-      kmin=alog10(kbasic*1.28)
+      kmax=alog10(maxval(kbasic*LL/2))
+      kmin=alog10(minval(kbasic)*1.28)
     else
-      kmax=kbasic*(L+1)/2
-      kmin=kbasic/2
+      kmax=maxval(kbasic*(LL+1)/2)
+      kmin=minval(kbasic/2)
     endif
   else
     if (logbin) then
       kmax=alog10(kmax)
-      if (kmin.eq.0) then
+      if (kmin.le.0) then
         write(*,*) 'ERROR: kmin=0, set kmin=1.28*kbasic'
-        kmin=alog10(kbasic*1.28)
+        kmin=alog10(minval(kbasic)*1.28)
       else
         kmin=alog10(kmin)
       endif
@@ -313,18 +317,18 @@ if (command.eq.0) then
   endif
 
   write(*,*) 'memo for den8:',product(real(LL))*8/1024.**3,'G'
-  allocate(den8(L,L,L))
+  allocate(den8(LL(1),LL(2),LL(3)))
 
   write(*,*) 'memo for vc1:',(float(LL(1)+2)*LL(2)*LL(3))*4/1024.**3,'G'
-  allocate(vc1(L+2,L,L))
+  allocate(vc1(LL(1)+2,LL(2),LL(3)))
 
   if (second) then
     write(*,*) 'memo for vc2:',(float(LL(1)+2)*LL(2)*LL(3))*4/1024.**3,'G'
-    allocate(vc2(L+2,L,L))
+    allocate(vc2(LL(1)+2,LL(2),LL(3)))
   endif
 
   write(*,*) 'memo for vc3:',(float(LL(1)+2)*LL(2)*LL(3))*4/1024.**3,'G'
-  allocate(vc3(L+2,L,L))
+  allocate(vc3(LL(1)+2,LL(2),LL(3)))
 
   allocate(pk8(9,kbin))
   if (flag_pk2d) allocate(pk2d(7,kbin,ubin))
@@ -401,17 +405,17 @@ do k=1,LL(3)
   else
     rk=k-1-LL(3)
   endif
-  rk=kbasic*rk
+  rk=kbasic(3)*rk
   do j=1,LL(2)
     if (j.le.LL(2)/2+1) then
       rj=j-1
     else
       rj=j-1-LL(2)
     endif
-    rj=kbasic*rj
+    rj=kbasic(2)*rj
     do i=1,LL(1)+2,2
       ri=i/2
-      ri=kbasic*ri
+      ri=kbasic(1)*ri
 
       if (i.eq.1.and.j.eq.1.and.k.eq.1) cycle
       if (i.eq.1) then
@@ -450,7 +454,7 @@ pk8(6,:)=pk8(6,:)/pk8(9,:)-pk8(5,:)**2
 pk8(7,:)=pk8(7,:)/pk8(9,:)
 pk8(8,:)=pk8(8,:)/pk8(9,:)-pk8(7,:)**2
 
-pk8(3:8,:)=pk8(3:8,:)*box**3
+pk8(3:8,:)=pk8(3:8,:)*product(box)
 
 if (usecenter) then
   do i=1,kbin
@@ -506,17 +510,17 @@ subroutine calcpkmu(vc,LL,pk2d,kbin,ubin,filename)
     else
       rk=k-1-LL(3)
     endif
-    rk=kbasic*rk
+    rk=kbasic(3)*rk
     do j=1,LL(2)
       if (j.le.LL(2)/2+1) then
         rj=j-1
       else
         rj=j-1-LL(2)
       endif
-      rj=kbasic*rj
+      rj=kbasic(2)*rj
       do i=1,LL(1)+2,2
         ri=i/2
-        ri=kbasic*ri
+        ri=kbasic(1)*ri
 
         if (i.eq.1.and.j.eq.1.and.k.eq.1) cycle
         if (i.eq.1) then
@@ -784,7 +788,7 @@ subroutine normalization(vc,LL,pp)
   write(*,*) 'window function is deconvolved, pp=',pp
   hpi=pi/float(LL)
 
-  wz(0)=1
+  wz(1)=1
   !$omp parallel do default(private) shared(hpi,LL,wz) schedule(static)
   do k=2,LL(3)
     if (k.le.LL(3)/2+1) then
@@ -797,8 +801,9 @@ subroutine normalization(vc,LL,pp)
   enddo
   !$omp end parallel do
 
+  wy(1)=1
   !$omp parallel do default(private) shared(hpi,LL,wy) schedule(static)
-  do j=1,LL(2)
+  do j=2,LL(2)
     if (j.le.LL(2)/2+1) then
       rj=j-1
     else
@@ -809,15 +814,16 @@ subroutine normalization(vc,LL,pp)
   enddo
   !$omp end parallel do
 
+  wx(1)=1
   !$omp parallel do default(private) shared(hpi,LL,wx) schedule(static)
-  do i=1,LL(1)+2,2
+  do i=3,LL(1)+2,2
     ri=i/2
     a1=hpi(1)*ri
     wx(i/2+1)=sin(a1)/a1
   enddo
   !$omp end parallel do
 
-  !$omp parallel do default(private) shared(vc,wx,wy,wz,pp) schedule(static)
+  !$omp parallel do default(private) shared(vc,wx,wy,wz,pp,LL) schedule(static)
   do k=1,LL(3)
     do j=1,LL(2)
       do i=1,LL(1)+2,2
@@ -843,17 +849,17 @@ subroutine phaseshift(vc,LL,x0)
     else
       rk=k-1-LL(3)
     endif
-    rk=kbasic*rk
+    rk=kbasic(3)*rk
     do j=1,LL(2)
       if (j.le.LL(2)/2+1) then
         rj=j-1
       else
         rj=j-1-LL(2)
       endif
-      rj=kbasic*rj
+      rj=kbasic(2)*rj
       do i=1,LL(1)+2,2
         ri=i/2
-        ri=kbasic*ri
+        ri=kbasic(1)*ri
   
         cc=cmplx(vc(i,j,k),vc(i+1,j,k))
         cc=cc*exp(sum(x0*[ri,rj,rk])*cmplx(0.,1.))
